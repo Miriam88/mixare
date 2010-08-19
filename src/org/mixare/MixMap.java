@@ -63,9 +63,6 @@ public class MixMap extends MapActivity{
 	}
 	
 	public void setStartPoint(){
-//		LocationManager locationMgr = (LocationManager)getSystemService(LOCATION_SERVICE);
-//		Location location = locationMgr.getLastKnownLocation(LocationManager.GPS_PROVIDER);
-
 
 		Location location = ctx.getCurrentLocation();
 		MapController controller;

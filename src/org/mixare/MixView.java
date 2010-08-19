@@ -42,7 +42,9 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.location.Address;
 import android.location.Criteria;
+import android.location.Geocoder;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
@@ -643,7 +645,7 @@ public float calcZoomLevel(){
 
 	public void onSensorChanged(SensorEvent evt) {
 		try {
-			killOnError();
+	//		killOnError();
 
 			if (evt.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
 				grav[0] = evt.values[0];
