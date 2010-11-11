@@ -19,6 +19,7 @@
 package org.mixare;
 
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Vector;
 
@@ -31,17 +32,23 @@ import android.app.SearchManager;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.location.Location;
+import android.location.LocationManager;
 import android.os.Bundle;
 import android.text.Editable;
+import android.text.InputType;
 import android.util.Log;
 import android.view.ContextMenu;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MotionEvent;
+import android.view.SubMenu;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.view.ContextMenu.ContextMenuInfo;
 import android.view.View.OnCreateContextMenuListener;
 import android.widget.ArrayAdapter;
@@ -53,6 +60,16 @@ import android.widget.ImageView;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import twitter4j.GeoLocation;
+import twitter4j.IDs;
+import twitter4j.ResponseList;
+import twitter4j.Twitter;
+import twitter4j.TwitterException;
+import twitter4j.TwitterFactory;
+import twitter4j.User;
+import twitter4j.http.AccessToken;
+import twitter4j.http.RequestToken;
 
 public class MixListView extends ListActivity {
 
@@ -74,6 +91,19 @@ public class MixListView extends ListActivity {
 	private static String searchQuery = "";
 	public static List<Marker> searchResultMarkers;
 	public static List<Marker> originalMarkerList;
+	
+	private static String pin = "";
+	private RequestToken requestToken;
+	private AccessToken accessToken;
+	private static Twitter twitter;
+	private final String CONSUMER_SECRET= "ayBTNlVKojzn84nJVHHFTPuxSEKjliuvSsKcM4e0A8";
+	private final String CONSUMER_KEY= "WNLtvW3Yzlgn7CPjIK8xw";
+	private static  int USER_ID= 0;
+	private final String PREFS_NAME = "MyPrefsFileForMenuItems";
+	private boolean twitterAccess = false;
+	private int menuID = 0; //0=Twetter menu, 1=Following menu, 2=Follower menu
+
+
 
 	public Vector<String> getDataSourceMenu() {
 		return dataSourceMenu;
@@ -119,12 +149,13 @@ public class MixListView extends ListActivity {
 			dataSourceChecked.add(mixContext.isDataSourceSelected(DATASOURCE.BUZZ));
 			dataSourceChecked.add(mixContext.isDataSourceSelected(DATASOURCE.OSM));
 			dataSourceChecked.add(mixContext.isDataSourceSelected(DATASOURCE.OWNURL));
-
+			
 			adapter = new ListItemAdapter(this);
 			//adapter.colorSource(getDataSource());
 			getListView().setTextFilterEnabled(true);
-
+			
 			setListAdapter(adapter);
+			
 			break;
 
 		case 2:
@@ -268,7 +299,7 @@ public class MixListView extends ListActivity {
 		}
 	}
 
-	public static void createContextMenu(ImageView icon) {
+	public void createContextMenu(ImageView icon) {
 		icon.setOnCreateContextMenuListener(new OnCreateContextMenuListener() {				
 			@Override
 			public void onCreateContextMenu(ContextMenu menu, View v, ContextMenuInfo menuInfo) {
@@ -279,8 +310,30 @@ public class MixListView extends ListActivity {
 					menu.add(index, index, index, "We are working on it...");			
 					break;
 				case 1:
+					if(twitterAccess==false){
+						establishTwitterConnection();
+					}
+					
 					menu.setHeaderTitle("Twitter Menu");
-					menu.add(index, index, index, "We are working on it...");
+					menu.add(index, index, index, "Tweet");
+					SubMenu friendsMenu = menu.addSubMenu(index, index+2, index+2, "Following");
+					SubMenu followerMenu = menu.addSubMenu(index, index+3, index+3, "Follower");
+					try {
+						int[] friends = twitter.getFriendsIDs(USER_ID).getIDs();
+						int[] followers = twitter.getFollowersIDs(USER_ID).getIDs();
+					
+						ResponseList<User> friendList = twitter.lookupUsers(friends);
+						for (int i = 0; i < friendList.size(); i++) {
+							friendsMenu.add(index, index+i, index+i, friendList.get(i).getName());
+						}
+						
+						ResponseList<User> followerList = twitter.lookupUsers(followers);
+						for (int i = 0; i < followerList.size(); i++) {
+							followerMenu.add(index, index+i, index+i, followerList.get(i).getName());
+						}
+					} catch (TwitterException e1) {
+							e1.printStackTrace();
+					}
 					break;
 				case 2:
 					menu.setHeaderTitle("Buzz Menu");
@@ -328,6 +381,9 @@ public class MixListView extends ListActivity {
 
 			/*TWITTER*/
 		case 1:		
+			if(twitterAccess == false){
+				establishTwitterConnection();
+			}
 			mixContext.toogleDataSource(DATASOURCE.TWITTER);
 			break;
 
@@ -347,6 +403,86 @@ public class MixListView extends ListActivity {
 			break;
 		}
 	}
+	
+	public void establishTwitterConnection(){
+		twitter = new TwitterFactory().getInstance();
+		twitter.setOAuthConsumer(CONSUMER_KEY, CONSUMER_SECRET);
+		
+	    final SharedPreferences settings = getSharedPreferences(PREFS_NAME, 0);
+	    final SharedPreferences.Editor editor = settings.edit();
+		try {
+			if(settings.getString("accessToken", "").equals("")){
+				
+				requestToken = twitter.getOAuthRequestToken();
+				accessToken = null;
+									
+				AlertDialog.Builder alert = new AlertDialog.Builder(ctx);
+				alert.setTitle("Twitter access:");
+				alert.setMessage("mixare needs access to your Twitter account. \n" +
+						"Insert the pin and click OK to grant access. ");
+				final EditText input = new EditText(ctx); 
+				input.setRawInputType(InputType.TYPE_CLASS_NUMBER );
+				alert.setView(input);
+				
+				alert.setPositiveButton("OK", new DialogInterface.OnClickListener() {
+		        	public void onClick(DialogInterface dialog, int id) {       		
+	        			Editable userinput = input.getText();
+	        			pin = ""+userinput;
+	        			dialog.dismiss();
+	        			
+	        			if(pin.length()>0)
+							try {
+								accessToken = twitter.getOAuthAccessToken(requestToken, pin);
+								/*STORE ACCESSTOKEN*/
+							    editor.putString("accessToken", accessToken.getToken());
+							    editor.putString("accessTokenSecret", accessToken.getTokenSecret());
+							    editor.putInt("userID", twitter.verifyCredentials().getId());
+							    editor.commit();
+				   
+							} catch (TwitterException e) {
+								e.printStackTrace();
+							}		
+		        		}
+		        });
+				alert.setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
+		        	public void onClick(DialogInterface dialog, int id) {       		
+		        		dialog.dismiss();
+		            }
+		        });
+				 AlertDialog dialog = alert.show(); 
+	              dialog.getWindow().setFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND,
+	                      WindowManager.LayoutParams.FLAG_BLUR_BEHIND); 
+				
+				Log.i("------REQUEST URL: ",""+requestToken.getAuthenticationURL());
+				mixContext.loadWebPage(requestToken.getAuthenticationURL(), this);
+			
+			}
+			else{
+				OAuthAccess();			
+			}
+		}
+		catch(Exception e){
+			e.printStackTrace();
+		}
+		twitterAccess = true;
+	}
+	
+	public boolean OAuthAccess(){
+	//	if(MixView.oauthAccessGranted==false){
+			
+		    SharedPreferences settings = getSharedPreferences(PREFS_NAME, 0);
+		    SharedPreferences.Editor editor = settings.edit();
+		    USER_ID = settings.getInt("userID", 0);
+		    accessToken= new AccessToken(settings.getString("accessToken", ""), settings.getString("accessTokenSecret", ""));
+			twitter = new TwitterFactory().getInstance();
+			twitter.setOAuthConsumer(CONSUMER_KEY, CONSUMER_SECRET);
+			twitter.setOAuthAccessToken(accessToken);
+			return true;
+		//}
+		//TODO: ceck if access already granted 
+		//return false;
+	}
+
 
 
 	@Override
@@ -382,11 +518,72 @@ public class MixListView extends ListActivity {
 
 	@Override
 	public boolean onContextItemSelected(MenuItem item) {
-		switch(item.getItemId()){
-		case 1: 
-			break;
-		case 2: 
-			break;
+		Log.d("itemid....", ""+item.getItemId());
+		Log.d("manuID++++++++", ""+menuID);
+		OAuthAccess();
+		final Context context = this;
+		switch(menuID){
+			case 0:
+				switch(item.getItemId()){
+					/*Tweet*/
+					case 0: 
+						AlertDialog.Builder alert = new AlertDialog.Builder(ctx);
+						alert.setTitle("Your Tweet:");
+						final EditText input = new EditText(ctx); 
+						alert.setView(input);
+						alert.setPositiveButton("OK", new DialogInterface.OnClickListener() {
+				        	public void onClick(DialogInterface dialog, int id) {       		
+			        			Editable userinput = input.getText();
+			        			String tweet = ""+userinput;
+			        			
+			        			Location loc = mixContext.getCurrentLocation();
+			        			GeoLocation geoLoc = new GeoLocation(loc.getLatitude(), loc.getLongitude());
+			    				try {
+			    					twitter.updateStatus(tweet, geoLoc);
+			    				} catch (TwitterException e) {
+			    					e.printStackTrace();
+			    				}
+			    				Toast.makeText(context, "You Tweeted: " + tweet, Toast.LENGTH_LONG).show();
+				        	}
+			        			
+				        });
+						alert.setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
+				        	public void onClick(DialogInterface dialog, int id) {       		
+				        		dialog.dismiss();
+				            }
+				        });
+						 AlertDialog dialog = alert.show(); 
+			              dialog.getWindow().setFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND,
+			                      WindowManager.LayoutParams.FLAG_BLUR_BEHIND);
+						break;
+					/*Following*/
+					case 1:
+						try {
+							IDs ids1 = twitter.getFriendsIDs();
+						} catch (TwitterException e1) {
+							e1.printStackTrace();
+						}
+						menuID=1;
+						break;
+					/*Follower*/
+					case 2: 
+						try {
+							IDs ids = twitter.getFollowersIDs();
+						} catch (TwitterException e) {
+							e.printStackTrace();
+						}
+						menuID=2;
+						break;
+				}
+				break;
+			case 1: //Following menu
+				menuID=0;
+				break;
+			case 2: //Following menu
+				
+				menuID=0;
+				break;
+				
 		}
 		return false;
 	}
@@ -456,7 +653,7 @@ class ListItemAdapter extends BaseAdapter {
 
 
 		holder.icon.setPadding(20, 8, 20, 8);
-		holder.icon.setClickable(true);        
+		holder.icon.setClickable(true);     
 
 		holder.icon.setOnTouchListener(new View.OnTouchListener() {
 			@Override
@@ -467,9 +664,9 @@ class ListItemAdapter extends BaseAdapter {
 				return false;
 			}
 		});
-		MixListView.createContextMenu(holder.icon);
+		mixListView.createContextMenu(holder.icon);
 
-		if(position!=4){
+		if(position!=4 &&position !=1){
 			holder.icon.setVisibility(View.INVISIBLE);
 		}
 		holder.checkbox.setChecked(mixListView.getDataSourceChecked().get(position));
